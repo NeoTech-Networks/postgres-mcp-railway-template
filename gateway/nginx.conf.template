@@ -20,6 +20,12 @@ http {
       return 200 "ok\n";
     }
 
+    # Healthcheck endpoint (alternative name)
+    location = /healthz {
+      access_log off;
+      return 200 "ok\n";
+    }
+
     # Return JSON 404 on OAuth discovery probes so clients fall back to bearer
     # auth. Regex catches every variant (bare, /.well-known/.../mcp, /mcp/.well-known/...).
     location ~ /\.well-known/ {
