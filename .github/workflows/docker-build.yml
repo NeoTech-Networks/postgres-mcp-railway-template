@@ -1,0 +1,42 @@
+# Builds both images this template ships (gateway and mcp) on every PR and on
+# main. Eight production Railway services build from these two Dockerfiles, so
+# the "docker-build" gate job is the required status check on main.
+name: docker-build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [gateway, mcp]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image }}
+          push: false
+          load: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  docker-build:
+    needs: [build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate
+        shell: bash
+        run: |
+          echo "build=${{ needs.build.result }}"
+          [ "${{ needs.build.result }}" = "success" ] || { echo "one or both image builds failed"; exit 1; }
