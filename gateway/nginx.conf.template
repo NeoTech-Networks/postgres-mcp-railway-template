@@ -39,6 +39,54 @@ http {
       return 404 '{"error":"not_found"}';
     }
 
+    # Keyed-path entrypoint.
+    #
+    # Some MCP clients enumerate a server's tools before they have anywhere to
+    # put a credential, so their discovery request carries no Authorization
+    # header and gets a 401 from the block below. Composio's custom-MCP sync is
+    # one of these: it stores the API key against the connection but does not
+    # send it when listing tools.
+    #
+    # This location accepts the same key as the first path segment instead of
+    # as a header, validates it against the identical ${API_KEY_PATTERN}, and
+    # then behaves exactly like /mcp. Nothing is opened up: an absent or wrong
+    # key still gets 401.
+    #
+    # The trade-off is that the key travels in the URL, so it can land in edge
+    # and proxy logs. Issue a SEPARATE key for any client that uses this path
+    # so it can be rotated on its own, and prefer the header form everywhere
+    # else. access_log is off here so the gateway itself does not record it.
+    #
+    # The path-key charset deliberately excludes "/" (which the header form
+    # allows) because a slash would split the path segment.
+    location ~ "^/k/(?<path_key>[A-Za-z0-9._~+=-]+)/mcp/?$" {
+      access_log off;
+
+      if ($path_key !~ "^(${API_KEY_PATTERN})$") {
+        add_header Content-Type 'application/json' always;
+        return 401 '{"error":"unauthorized"}';
+      }
+
+      set $upstream "http://${MCP_HOST}:${MCP_PORT}";
+
+      proxy_http_version 1.1;
+      proxy_set_header Connection "";
+
+      # Long-lived streaming responses.
+      proxy_buffering off;
+      proxy_cache off;
+      proxy_read_timeout 1h;
+      proxy_send_timeout 1h;
+
+      proxy_set_header Host "127.0.0.1:${MCP_PORT}";
+      proxy_set_header X-Forwarded-Host $host;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+
+      # Strip the key segment; the upstream only ever sees /mcp.
+      proxy_pass $upstream/mcp$is_args$args;
+    }
+
     location / {
       if ($auth_ok = 0) {
         add_header WWW-Authenticate 'Bearer realm="postgres-mcp"' always;
