@@ -53,7 +53,11 @@ jobs:
         run: |
           docker network create ci-net
           mkdir -p stub
-          printf 'upstream reached\n' > stub/index.html
+          # The real upstream answers on /mcp, so the stub must too. Serving
+          # only / would make every proxied request 404 and the assertions
+          # below would be testing nothing.
+          printf 'upstream root\n' > stub/index.html
+          printf 'upstream mcp\n' > stub/mcp
           docker run -d --name mcp --network ci-net \
             -v "$PWD/stub:/usr/share/nginx/html:ro" \
             nginx:1.29.8-alpine
@@ -70,6 +74,7 @@ jobs:
             curl -fsS http://localhost:8080/healthz >/dev/null 2>&1 && break
             sleep 1
           done
+          curl -fsS http://localhost:8080/healthz >/dev/null
 
       - name: nginx config is valid
         run: docker exec gw nginx -t
@@ -90,6 +95,10 @@ jobs:
 
           echo "bare /mcp with a good bearer reaches the upstream"
           [ "$(code -H 'Authorization: Bearer goodkeyone' http://localhost:8080/mcp)" = 200 ]
+          curl -s -H 'Authorization: Bearer goodkeyone' http://localhost:8080/mcp | grep -q 'upstream mcp'
+
+          echo "keyed path with no key at all is rejected"
+          [ "$(code http://localhost:8080/k//mcp)" = 401 ]
 
           echo "keyed path with a bad key is rejected"
           [ "$(code http://localhost:8080/k/nope/mcp)" = 401 ]
@@ -97,11 +106,12 @@ jobs:
           echo "keyed path with a good key reaches the upstream"
           [ "$(code http://localhost:8080/k/goodkeytwo/mcp)" = 200 ]
 
-          echo "keyed path does not leak the key to the upstream path"
-          curl -s http://localhost:8080/k/goodkeytwo/mcp | grep -q 'upstream reached'
+          echo "keyed path lands on /mcp upstream, not on the key segment"
+          curl -s http://localhost:8080/k/goodkeytwo/mcp | grep -q 'upstream mcp'
 
-          echo "a key is never a substitute for the whole path"
+          echo "a valid key does not unlock any other path"
           [ "$(code http://localhost:8080/k/goodkeyone/tools)" = 401 ]
+          [ "$(code http://localhost:8080/k/goodkeyone/)" = 401 ]
 
       - name: Gateway logs on failure
         if: failure()
