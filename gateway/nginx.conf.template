@@ -83,6 +83,9 @@ http {
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto $scheme;
 
+      # Upstream key (only when UPSTREAM_KEY is set; otherwise an empty line).
+      ${UPSTREAM_AUTH}
+
       # Strip the key segment; the upstream only ever sees /mcp.
       proxy_pass $upstream/mcp$is_args$args;
     }
@@ -118,6 +121,9 @@ http {
       proxy_set_header X-Forwarded-Host $host;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto $scheme;
+
+      # Upstream key (only when UPSTREAM_KEY is set; otherwise an empty line).
+      ${UPSTREAM_AUTH}
 
       proxy_pass $upstream$uri$is_args$args;
     }
