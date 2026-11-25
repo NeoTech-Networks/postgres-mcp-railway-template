@@ -1,0 +1,75 @@
+# In-container auth proxy for the mcp service.
+#
+# Rendered by /entrypoint.sh ONLY when MCP_AUTH_KEY is set. When it is unset
+# this file is never read and postgres-mcp listens on $PORT directly, exactly
+# as before.
+#
+# postgres-mcp has no client authentication of its own, so without this proxy
+# any service in the Railway project can reach its private port. With it,
+# postgres-mcp listens on 127.0.0.1 only and this nginx is the one listener on
+# $PORT: every request except /health must carry
+# "Authorization: Bearer <MCP_AUTH_KEY>".
+#
+# Placeholders (@@NAME@@) are filled in by sed in /entrypoint.sh.
+
+worker_processes 1;
+pid @@NGINX_DIR@@/nginx.pid;
+error_log stderr warn;
+
+events { worker_connections 256; }
+
+http {
+  access_log off;
+  default_type text/plain;
+
+  # The container runs as a non-root user, so every temp path must be writable.
+  client_body_temp_path @@NGINX_DIR@@/client_body;
+  proxy_temp_path       @@NGINX_DIR@@/proxy;
+  fastcgi_temp_path     @@NGINX_DIR@@/fastcgi;
+  uwsgi_temp_path       @@NGINX_DIR@@/uwsgi;
+  scgi_temp_path        @@NGINX_DIR@@/scgi;
+
+  map $http_authorization $mcp_auth_ok {
+    default 0;
+    "Bearer @@MCP_AUTH_KEY@@" 1;
+  }
+
+  server {
+    listen @@PORT@@;
+    @@LISTEN_V6@@
+    client_max_body_size 16m;
+
+    # Open so Railway healthchecks need no key. Answered here, not proxied.
+    location = /health {
+      return 200 "ok\n";
+    }
+
+    location / {
+      if ($mcp_auth_ok = 0) {
+        add_header WWW-Authenticate 'Bearer realm="postgres-mcp"' always;
+        add_header Content-Type 'application/json' always;
+        return 401 '{"error":"unauthorized"}';
+      }
+
+      proxy_http_version 1.1;
+      proxy_set_header Connection "";
+
+      # Long-lived streaming responses.
+      proxy_buffering off;
+      proxy_cache off;
+      proxy_read_timeout 1h;
+      proxy_send_timeout 1h;
+
+      # The MCP SDK's DNS-rebinding protection only accepts loopback Host values.
+      proxy_set_header Host "127.0.0.1:@@UPSTREAM_PORT@@";
+      proxy_set_header X-Forwarded-Host $host;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+
+      # The key stops here; postgres-mcp never sees it.
+      proxy_set_header Authorization "";
+
+      proxy_pass http://127.0.0.1:@@UPSTREAM_PORT@@;
+    }
+  }
+}

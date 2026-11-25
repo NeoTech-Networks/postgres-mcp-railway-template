@@ -49,6 +49,7 @@ Two Railway services:
 | `API_KEYS` | yes | Comma-separated list of allowed bearer tokens. Allowed chars per key: `A-Z a-z 0-9 . _ ~ + / = -` |
 | `MCP_HOST` | no | Defaults to `mcp.railway.internal`. Only override if you rename the mcp service. |
 | `MCP_PORT` | no | Defaults to `8000`. |
+| `UPSTREAM_KEY` | no | When set, the gateway replaces the client's `Authorization` header with `Bearer <UPSTREAM_KEY>` after the client key is accepted (header path and `/k/<key>/mcp` path alike). Set it to the mcp service's `MCP_AUTH_KEY`. Unset: the client header passes through unchanged, as before. Same allowed chars as `API_KEYS`. |
 
 ### MCP service
 
@@ -57,13 +58,25 @@ Two Railway services:
 | `DATABASE_URI` | yes | Postgres connection string, e.g. `postgresql://user:pass@host:5432/dbname` |
 | `ACCESS_MODE` | no | `restricted` (default) — read-only transactions with execution-time limits. Set to `unrestricted` for full read/write. |
 | `OPENAI_API_KEY` | no | Enables postgres-mcp's experimental LLM-based index tuning. |
+| `MCP_AUTH_KEY` | no | When set, postgres-mcp listens on `127.0.0.1:${MCP_INTERNAL_PORT}` only and an in-container nginx on `$PORT` requires `Authorization: Bearer <MCP_AUTH_KEY>` on every path except `/health` (answered by nginx, always `200`). Missing or wrong key: `401`. Unset: postgres-mcp listens on `$PORT` directly with no auth, as before. Same allowed chars as `API_KEYS`. Only takes effect when the service runs `/entrypoint.sh`. |
+| `MCP_INTERNAL_PORT` | no | Loopback port for postgres-mcp when `MCP_AUTH_KEY` is set. Defaults to `8000`; must differ from `$PORT`. |
+
+### Turning on the mcp key (rollout order)
+
+Do these in order, per project, and check the MCP still answers through the gateway after each step. Each step is safe on its own.
+
+1. **Gateway:** set `UPSTREAM_KEY` to a new key and redeploy. postgres-mcp ignores the extra header until it has a key, so nothing changes yet.
+2. **MCP:** set `MCP_AUTH_KEY` to the same value. It only takes effect once the service runs `/entrypoint.sh`.
+3. **MCP start command:** set it to `/entrypoint.sh` and redeploy. If the current custom start command passes an access mode (for example `--access-mode=unrestricted`), set `ACCESS_MODE` to the same value first, because `/entrypoint.sh` defaults to `restricted`.
+
+Rollback: clear the start command or unset `MCP_AUTH_KEY` on the mcp service (it goes back to open on `$PORT`), then unset `UPSTREAM_KEY` on the gateway if wanted.
 
 ## 🔒 Two layers of protection
 
 - **Bearer auth at the gateway** is the network boundary — nothing reaches the MCP without a valid key.
 - **`ACCESS_MODE=restricted`** is the SQL boundary — even if a key leaks, the attacker can only run read-only queries with time limits and cannot `commit`/`rollback`.
 
-Postgres-mcp upstream has **no built-in client authentication** of its own (verified against v0.3.0 source). The gateway is therefore mandatory if the service is reachable from anything outside Railway's private network.
+Postgres-mcp upstream has **no built-in client authentication** of its own (verified against v0.3.0 source). The gateway is therefore mandatory if the service is reachable from anything outside Railway's private network. Inside the private network, any service in the project can reach the mcp port unless `MCP_AUTH_KEY` is set (see above).
 
 ## 📝 Notes
 

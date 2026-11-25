@@ -25,13 +25,15 @@ FROM python:3.12-slim-bookworm
 
 RUN groupadd -r app && useradd -r -g app app
 
+# nginx is only started when MCP_AUTH_KEY is set (see entrypoint.sh).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libpq-dev \
+  && apt-get install -y --no-install-recommends libpq-dev nginx \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder --chown=app:app /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 
+COPY nginx.conf.template /etc/mcp-nginx/nginx.conf.template
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

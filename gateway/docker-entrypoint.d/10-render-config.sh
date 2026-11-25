@@ -39,6 +39,23 @@ export RESOLVER
 
 export MCP_HOST MCP_PORT PORT
 
-envsubst '${API_KEY_PATTERN} ${RESOLVER} ${MCP_HOST} ${MCP_PORT} ${PORT}' \
+# Optional UPSTREAM_KEY: once the client key has been accepted, the request is
+# forwarded with "Authorization: Bearer <UPSTREAM_KEY>" instead of the client's
+# header, so the mcp service can require its own key (MCP_AUTH_KEY). Unset:
+# UPSTREAM_AUTH renders as an empty line and the client header passes through
+# unchanged, exactly as before.
+UPSTREAM_AUTH=""
+if [ -n "${UPSTREAM_KEY:-}" ]; then
+  case "$UPSTREAM_KEY" in
+    *[!A-Za-z0-9._~+/=-]*)
+      echo "gateway: UPSTREAM_KEY contains an invalid character; allowed: A-Z a-z 0-9 . _ ~ + / = -" >&2
+      exit 1
+      ;;
+  esac
+  UPSTREAM_AUTH="proxy_set_header Authorization \"Bearer ${UPSTREAM_KEY}\";"
+fi
+export UPSTREAM_AUTH
+
+envsubst '${API_KEY_PATTERN} ${RESOLVER} ${MCP_HOST} ${MCP_PORT} ${PORT} ${UPSTREAM_AUTH}' \
   < /etc/nginx/nginx.conf.template \
   > /etc/nginx/nginx.conf
